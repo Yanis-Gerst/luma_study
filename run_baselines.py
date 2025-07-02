@@ -16,6 +16,7 @@ from baselines.dirichlet import DirichletModel
 from baselines.mc_model import MCDModel
 from data_generation.text_processing import extract_deep_text_features
 from dataset import LUMADataset
+from octopy.octopy.metrics.conflict.conflict_change_rate import get_degree_of_conflict
 
 pl.seed_everything(42)
 
@@ -35,7 +36,8 @@ class PadCutToSizeAudioTransform():
 
     def __call__(self, audio):
         if audio.shape[-1] < self.size:
-            audio = torch.nn.functional.pad(audio, (0, self.size - audio.shape[-1]))
+            audio = torch.nn.functional.pad(
+                audio, (0, self.size - audio.shape[-1]))
         elif audio.shape[-1] > self.size:
             audio = audio[:, :self.size]
         return audio
@@ -73,9 +75,12 @@ ood_image_path = f'data/image_data_ood{suffix}.pickle'
 ood_text_path = f'data/text_data_ood{suffix}.tsv'
 
 
-extract_deep_text_features(train_text_path, output_path=f'text_features_train_{args.noise_type}.npy')
-extract_deep_text_features(test_text_path, output_path=f'text_features_test_{args.noise_type}.npy')
-extract_deep_text_features(ood_text_path, output_path=f'text_features_ood_{args.noise_type}.npy')
+extract_deep_text_features(
+    train_text_path, output_path=f'text_features_train_{args.noise_type}.npy')
+extract_deep_text_features(
+    test_text_path, output_path=f'text_features_test_{args.noise_type}.npy')
+extract_deep_text_features(
+    ood_text_path, output_path=f'text_features_ood_{args.noise_type}.npy')
 
 print(f'Loading data from {train_audio_path}, {test_audio_path}, {ood_audio_path}, {train_image_path}, {train_text_path}, {test_image_path}, {test_text_path}, {ood_image_path}, {ood_text_path}')
 image_transform = Compose([
@@ -85,28 +90,38 @@ image_transform = Compose([
               std=(0.27, 0.26, 0.28))
 ])
 train_dataset = LUMADataset(train_image_path, train_audio_path, train_audio_data_path, train_text_path,
-                            text_transform=Text2FeatureTransform(f'text_features_train_{args.noise_type}.npy'),
-                            audio_transform=Compose([MelSpectrogram(), PadCutToSizeAudioTransform(128)]),
+                            text_transform=Text2FeatureTransform(
+                                f'text_features_train_{args.noise_type}.npy'),
+                            audio_transform=Compose(
+                                [MelSpectrogram(), PadCutToSizeAudioTransform(128)]),
                             image_transform=image_transform)
 
 test_dataset = LUMADataset(test_image_path, test_audio_path, test_audio_data_path, test_text_path,
-                           text_transform=Text2FeatureTransform(f'text_features_test_{args.noise_type}.npy'),
-                           audio_transform=Compose([MelSpectrogram(), PadCutToSizeAudioTransform(128)]),
+                           text_transform=Text2FeatureTransform(
+                               f'text_features_test_{args.noise_type}.npy'),
+                           audio_transform=Compose(
+                               [MelSpectrogram(), PadCutToSizeAudioTransform(128)]),
                            image_transform=image_transform)
 
 ood_dataset = LUMADataset(ood_image_path, ood_audio_path, ood_audio_data_path, ood_text_path,
-                          text_transform=Text2FeatureTransform(f'text_features_ood_{args.noise_type}.npy'),
-                          audio_transform=Compose([MelSpectrogram(), PadCutToSizeAudioTransform(128)]),
+                          text_transform=Text2FeatureTransform(
+                              f'text_features_ood_{args.noise_type}.npy'),
+                          audio_transform=Compose(
+                              [MelSpectrogram(), PadCutToSizeAudioTransform(128)]),
                           image_transform=image_transform, ood=True)
 train_dataset, val_dataset = torch.utils.data.random_split(train_dataset, [int(0.8 * len(train_dataset)),
                                                                            len(train_dataset) - int(
                                                                                0.8 * len(train_dataset))])
 
 batch_size = 128
-train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
-val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
-test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
-ood_loader = torch.utils.data.DataLoader(ood_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
+train_loader = torch.utils.data.DataLoader(
+    train_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
+val_loader = torch.utils.data.DataLoader(
+    val_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
+test_loader = torch.utils.data.DataLoader(
+    test_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
+ood_loader = torch.utils.data.DataLoader(
+    ood_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
 
 # Now we can use the loaders to train a model
 
@@ -127,9 +142,11 @@ uncertainty_values = {}
 for classifier in models:
     model = classifier
     try:
-        model_name = classifier.__class__.__name__ + '_' + classifier.model.__class__.__name__
+        model_name = classifier.__class__.__name__ + \
+            '_' + classifier.model.__class__.__name__
     except AttributeError:
-        model_name = classifier.__class__.__name__ + '_' + classifier.models[0].__class__.__name__
+        model_name = classifier.__class__.__name__ + \
+            '_' + classifier.models[0].__class__.__name__
     trainer = pl.Trainer(max_epochs=300,
                          gpus=1 if torch.cuda.is_available() else 0,
                          callbacks=[pl.callbacks.EarlyStopping(monitor='val_loss', patience=10, mode='min'),
@@ -139,19 +156,22 @@ for classifier in models:
     trainer.test(model, test_loader)
     acc_dict[model_name] = trainer.callback_metrics["test_acc"]
     acc_dict[model_name + '_ale'] = trainer.callback_metrics["test_ale"]
-    acc_dict[model_name + '_entropy_ep'] = trainer.callback_metrics["test_entropy_epi"]
+    acc_dict[model_name +
+             '_entropy_ep'] = trainer.callback_metrics["test_entropy_epi"]
     aleatoric_uncertainties = model.aleatoric_uncertainties
     epistemic_uncertainties = model.epistemic_uncertainties
     print('Testing OOD')
     trainer.test(model, ood_loader)
     acc_dict[model_name + '_ood_ale'] = trainer.callback_metrics["test_ale"]
     acc_dict[model_name + '_ood'] = trainer.callback_metrics["test_acc"]
-    acc_dict[model_name + '_ood_entropy_ep'] = trainer.callback_metrics["test_entropy_epi"]
+    acc_dict[model_name +
+             '_ood_entropy_ep'] = trainer.callback_metrics["test_entropy_epi"]
     aleatoric_uncertainties_ood = model.aleatoric_uncertainties
     epistemic_uncertainties_ood = model.epistemic_uncertainties
 
     auc_score = roc_auc_score(
-        np.concatenate([np.zeros(len(epistemic_uncertainties)), np.ones(len(epistemic_uncertainties_ood))]),
+        np.concatenate([np.zeros(len(epistemic_uncertainties)),
+                       np.ones(len(epistemic_uncertainties_ood))]),
         np.concatenate([epistemic_uncertainties, epistemic_uncertainties_ood]))
 
     uncertainty_values[f'{model_name}_epistemic'] = epistemic_uncertainties

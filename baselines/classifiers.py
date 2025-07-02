@@ -1,6 +1,7 @@
 import torch
 
 from baselines.utils import MCDropout
+from octopy.octopy.uncertainty.fusion import DiscountedBeliefFusion
 
 
 class ImageClassifier(torch.nn.Module):
@@ -62,6 +63,7 @@ class AudioClassifier(torch.nn.Module):
             return self.classifier(audio), torch.nn.functional.softplus(self.sigma(audio))
         return self.classifier(audio)
 
+
 class TextClassifier(torch.nn.Module):
     def __init__(self, num_classes, dropout=0.5, monte_carlo=False, aleatoric=False):
         super(TextClassifier, self).__init__()
@@ -90,14 +92,20 @@ class TextClassifier(torch.nn.Module):
 class MultimodalClassifier(torch.nn.Module):
     def __init__(self, num_classes, dropout=0.5, monte_carlo=False, dirichlet=False, aleatoric=False):
         super(MultimodalClassifier, self).__init__()
-        self.image_model = ImageClassifier(num_classes, dropout, monte_carlo, aleatoric)
-        self.audio_model = AudioClassifier(num_classes, dropout, monte_carlo, aleatoric)
-        self.text_model = TextClassifier(num_classes, dropout, monte_carlo, aleatoric)
+        self.image_model = ImageClassifier(
+            num_classes, dropout, monte_carlo, aleatoric)
+        self.audio_model = AudioClassifier(
+            num_classes, dropout, monte_carlo, aleatoric)
+        self.text_model = TextClassifier(
+            num_classes, dropout, monte_carlo, aleatoric)
+        self.num_views = 3
+        self.fusion = DiscountedBeliefFusion(self.num_views, num_classes)
         self.monte_carlo = monte_carlo
         self.dirichlet = dirichlet
         self.aleatoric = aleatoric
         if dirichlet and monte_carlo:
-            raise ValueError("Dirichlet and Monte Carlo cannot be used together")
+            raise ValueError(
+                "Dirichlet and Monte Carlo cannot be used together")
 
     def forward(self, x):
         image_outputs = self.image_model(x)
@@ -115,7 +123,7 @@ class MultimodalClassifier(torch.nn.Module):
             image_logits = torch.nn.functional.softplus(image_outputs)
             audio_logits = torch.nn.functional.softplus(audio_outputs)
             text_logits = torch.nn.functional.softplus(text_outputs)
-            logits = ((image_logits + audio_logits) / 2 + text_logits) / 2
+            logits = self.fusion([image_logits, audio_logits, text_logits])
             return logits, (image_logits, audio_logits, text_logits)
         logits = (image_outputs + audio_outputs + text_outputs) / 3
         return logits
