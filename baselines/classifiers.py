@@ -2,6 +2,7 @@ import torch
 
 from baselines.utils import MCDropout
 from octopy.octopy.uncertainty.fusion import DiscountedBeliefFusion
+from octopy.octopy.uncertainty.layers import EvidentialActivation
 
 
 class ImageClassifier(torch.nn.Module):
@@ -100,6 +101,7 @@ class MultimodalClassifier(torch.nn.Module):
             num_classes, dropout, monte_carlo, aleatoric)
         self.num_views = 3
         self.fusion = DiscountedBeliefFusion(self.num_views, num_classes)
+        self.evidential_activation = EvidentialActivation("exp", clamp_max=42)
         self.monte_carlo = monte_carlo
         self.dirichlet = dirichlet
         self.aleatoric = aleatoric
@@ -123,7 +125,18 @@ class MultimodalClassifier(torch.nn.Module):
             image_logits = torch.nn.functional.softplus(image_outputs)
             audio_logits = torch.nn.functional.softplus(audio_outputs)
             text_logits = torch.nn.functional.softplus(text_outputs)
-            logits = self.fusion([image_logits, audio_logits, text_logits])
-            return logits, (image_logits, audio_logits, text_logits)
+            # image_logits = self.evidential_activation(image_outputs)
+            # audio_logits = self.evidential_activation(audio_outputs)
+            # text_logits = self.evidential_activation(text_outputs)
+            print(image_logits.argmax(dim=1), audio_logits.argmax(
+                dim=1), text_logits.argmax(dim=1))
+            evidences = dict()
+            evidences[0] = image_logits
+            evidences[1] = audio_logits
+            evidences[2] = text_logits
+            # logits = self.fusion(evidences)
+            logits = ((image_logits + audio_logits) / 2 + text_logits) / 2
+            # print(logits.argmax(dim=1))
+            return logits, evidences
         logits = (image_outputs + audio_outputs + text_outputs) / 3
         return logits

@@ -17,6 +17,8 @@ from baselines.mc_model import MCDModel
 from data_generation.text_processing import extract_deep_text_features
 from dataset import LUMADataset
 from octopy.octopy.metrics.conflict.conflict_change_rate import get_degree_of_conflict
+from lightning.pytorch.loggers import WandbLogger
+wandb_logger = WandbLogger(log_model="all")
 
 pl.seed_everything(42)
 
@@ -75,12 +77,12 @@ ood_image_path = f'data/image_data_ood{suffix}.pickle'
 ood_text_path = f'data/text_data_ood{suffix}.tsv'
 
 
-extract_deep_text_features(
-    train_text_path, output_path=f'text_features_train_{args.noise_type}.npy')
-extract_deep_text_features(
-    test_text_path, output_path=f'text_features_test_{args.noise_type}.npy')
-extract_deep_text_features(
-    ood_text_path, output_path=f'text_features_ood_{args.noise_type}.npy')
+# extract_deep_text_features(
+#     train_text_path, output_path=f'text_features_train_{args.noise_type}.npy')
+# extract_deep_text_features(
+#     test_text_path, output_path=f'text_features_test_{args.noise_type}.npy')
+# extract_deep_text_features(
+#     ood_text_path, output_path=f'text_features_ood_{args.noise_type}.npy')
 
 print(f'Loading data from {train_audio_path}, {test_audio_path}, {ood_audio_path}, {train_image_path}, {train_text_path}, {test_image_path}, {test_text_path}, {ood_image_path}, {ood_text_path}')
 image_transform = Compose([
@@ -131,14 +133,18 @@ mc_samples = 100
 dropout_p = 0.3
 n_ensemble = 10
 
-mc_models = [MCDModel(c, classes, mc_samples, dropout_p) for c in [ImageClassifier, AudioClassifier, TextClassifier,
-                                                                   MultimodalClassifier]]
-de_models = [DEModel(c, classes, n_ensemble, dropout_p) for c in [ImageClassifier, AudioClassifier, TextClassifier,
-                                                                  MultimodalClassifier]]
-dir_models = [DirichletModel(MultimodalClassifier, classes, dropout=dropout_p)]
-models = mc_models + de_models + dir_models
+# mc_models = [MCDModel(c, classes, mc_samples, dropout_p) for c in [ImageClassifier, AudioClassifier, TextClassifier,
+#                                                                    MultimodalClassifier]]
+# de_models = [DEModel(c, classes, n_ensemble, dropout_p) for c in [ImageClassifier, AudioClassifier, TextClassifier,
+#                                                                   MultimodalClassifier]]
+
+dir_models = [DirichletModel(
+    MultimodalClassifier, classes, dropout=dropout_p)]
+# models = mc_models + de_models + dir_models
+models = dir_models
 
 uncertainty_values = {}
+dc_values = {}
 for classifier in models:
     model = classifier
     try:
@@ -149,8 +155,7 @@ for classifier in models:
             '_' + classifier.models[0].__class__.__name__
     trainer = pl.Trainer(max_epochs=300,
                          gpus=1 if torch.cuda.is_available() else 0,
-                         callbacks=[pl.callbacks.EarlyStopping(monitor='val_loss', patience=10, mode='min'),
-                                    pl.callbacks.ModelCheckpoint(monitor='val_loss', mode='min', save_last=True)])
+                         callbacks=[pl.callbacks.ModelCheckpoint(monitor='val_loss', mode='min', save_last=True)], logger=wandb_logger)
     trainer.fit(model, train_loader, val_loader)
     print('Testing model')
     trainer.test(model, test_loader)
@@ -174,11 +179,18 @@ for classifier in models:
                        np.ones(len(epistemic_uncertainties_ood))]),
         np.concatenate([epistemic_uncertainties, epistemic_uncertainties_ood]))
 
-    uncertainty_values[f'{model_name}_epistemic'] = epistemic_uncertainties
-    uncertainty_values[f'{model_name}_aleatoric'] = aleatoric_uncertainties
+    uncertainty_values[f'epistemic'] = epistemic_uncertainties
+    uncertainty_values[f'aleatoric'] = aleatoric_uncertainties
+    uncertainty_values["uncertainty_per_modality"] = model.uncertainty_per_modality
+    uncertainty_values["evidences_per_modality"] = model.evidences_per_modality
+    dc_values[f'{model_name}_dc'] = model.dc
     acc_dict[model_name + '_ood_auc'] = auc_score
 for key, value in acc_dict.items():
     print(f'{key}: {value}')
 
 uncertainty_df = pd.DataFrame(uncertainty_values)
+acc_df = pd.DataFrame(acc_dict)
 uncertainty_df.to_csv(f'uncertainty_values{args.noise_type}.csv')
+acc_df.to_csv(f'acc_values.csv')
+dc_df = pd.DataFrame(dc_values)
+dc_df.to_csv(f'dc_values{args.noise_type}.csv')

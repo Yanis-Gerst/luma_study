@@ -26,22 +26,26 @@ def aleatoric_loss(logits, targets, log_std, num_samples=100):
     std = log_std
     mu_mc = logits.unsqueeze(-1).repeat(*[1] * len(logits.shape), num_samples)
     # hard coded the known shape of the data
-    noise = torch.randn(*logits.shape, num_samples, device=logits.device) * std.unsqueeze(-1)
+    noise = torch.randn(*logits.shape, num_samples,
+                        device=logits.device) * std.unsqueeze(-1)
     prd = mu_mc + noise
 
-    targets = targets.unsqueeze(-1).repeat(*[1] * len(logits.shape), num_samples).squeeze(0)
+    targets = targets.unsqueeze(-1).repeat(*
+                                           [1] * len(logits.shape), num_samples).squeeze(0)
     mc_x = torch.nn.functional.cross_entropy(prd, targets, reduction='none')
     # mean across mc samples
     mc_x = mc_x.mean(-1)
     # mean across every thing else
     mc_x_mean = mc_x.mean()
     # assert is not inf or nan
-    assert not torch.isfinite(mc_x_mean).sum() == 0, f"Loss is inf: {mc_x_mean}"
+    assert not torch.isfinite(mc_x_mean).sum(
+    ) == 0, f"Loss is inf: {mc_x_mean}"
     return mc_x.mean()
 
 
 def edl_digamma_loss(alpha, target, epoch_num, num_classes, annealing_step, device):
-    loss = edl_loss(torch.digamma, target, alpha, epoch_num, num_classes, annealing_step, device)
+    loss = edl_loss(torch.digamma, target, alpha, epoch_num,
+                    num_classes, annealing_step, device)
     return torch.mean(loss)
 
 
@@ -49,10 +53,10 @@ def kl_divergence(alpha, num_classes, device):
     ones = torch.ones([1, num_classes], dtype=torch.float32, device=device)
     sum_alpha = torch.sum(alpha, dim=1, keepdim=True)
     first_term = (
-            torch.lgamma(sum_alpha)
-            - torch.lgamma(alpha).sum(dim=1, keepdim=True)
-            + torch.lgamma(ones).sum(dim=1, keepdim=True)
-            - torch.lgamma(ones.sum(dim=1, keepdim=True))
+        torch.lgamma(sum_alpha)
+        - torch.lgamma(alpha).sum(dim=1, keepdim=True)
+        + torch.lgamma(ones).sum(dim=1, keepdim=True)
+        - torch.lgamma(ones.sum(dim=1, keepdim=True))
     )
     second_term = (
         (alpha - ones)
@@ -79,7 +83,8 @@ def edl_loss(func, y, alpha, epoch_num, num_classes, annealing_step, device, use
     )
 
     kl_alpha = (alpha - 1) * (1 - y) + 1
-    kl_div = annealing_coef * kl_divergence(kl_alpha, num_classes, device=device)
+    kl_div = annealing_coef * \
+        kl_divergence(kl_alpha, num_classes, device=device)
     return A + kl_div
 
 
@@ -95,7 +100,8 @@ def get_dc_loss(evidences, device):
         u[v] = torch.squeeze(num_classes / S)
     dc_sum = 0
     for i in range(num_views):
-        pd = torch.sum(torch.abs(p - p[i]) / 2, dim=2) / (num_views - 1)  # (num_views, batch_size)
+        # (num_views, batch_size)
+        pd = torch.sum(torch.abs(p - p[i]) / 2, dim=2) / (num_views - 1)
         cc = (1 - u[i]) * (1 - u)  # (num_views, batch_size)
         dc = pd * cc
         dc_sum = dc_sum + torch.sum(dc, dim=0)
@@ -121,8 +127,10 @@ class AvgTrustedLoss(nn.Module):
             alpha = evidences[v] + 1
             loss_acc += edl_digamma_loss(alpha, target, self.annealing_step, num_classes, self.annealing_start,
                                          evidence_a.device)
+            print(f"Loss for view {v}: {loss_acc}")
         loss_acc = loss_acc / (len(evidences) + 1)
-        loss = loss_acc + self.gamma * get_dc_loss(evidences, evidence_a.device)
+        loss = loss_acc + self.gamma * \
+            get_dc_loss(evidences, evidence_a.device)
         return loss
 
 
@@ -130,7 +138,8 @@ def sampling_softmax(logits, log_sigma, num_samples=100):
     std = torch.exp(log_sigma)
     mu_mc = logits.unsqueeze(-1).repeat(*[1] * len(logits.shape), num_samples)
     # hard coded the known shape of the data
-    noise = torch.randn(*logits.shape, num_samples, device=logits.device) * std.unsqueeze(-1)
+    noise = torch.randn(*logits.shape, num_samples,
+                        device=logits.device) * std.unsqueeze(-1)
     prd = mu_mc + noise
     return torch.softmax(prd, dim=0).mean(-1)
 

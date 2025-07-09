@@ -1,1 +1,9 @@
 /data/
+.venv
+*.pycache
+wandb
+.vscode
+__pycache__
+*.pdf
+*.npy
+lightning_logs
