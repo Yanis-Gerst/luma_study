@@ -22,11 +22,14 @@ class UnimodalModel(pl.LightningModule):
         self.test_acc = Accuracy(task='multiclass', num_classes=num_classes)
         self.lr = lr
         self.annealing_step = annealing_step
-        if activation == "exp":
+        self.activation = activation
+        print(self.activation)
+        if self.activation == "s-exp" or self.activation == "exp":
             self.evidential_activation = EvidentialActivation(
                 "exp", clamp_max=clamp_max)
         else:
-            self.evidential_activation = EvidentialActivation("softplus")
+            self.evidential_activation = EvidentialActivation(
+                activation)
 
         self.criterion = EvidentialLoss(
             num_classes=num_classes, device=self.device)
@@ -49,7 +52,12 @@ class UnimodalModel(pl.LightningModule):
     def shared_step(self, batch, output_probs_tensor=False):
         image, audio, text, target = batch
         fused_output = self((image, audio, text))
-        fused_output = self.evidential_activation(fused_output)
+        if self.activation == "s-exp":
+            fused_output = torch.nn.functional.softplus(fused_output)
+            fused_output = self.evidential_activation(fused_output)
+        else:
+            fused_output = self.evidential_activation(fused_output)
+
         loss = self.criterion(fused_output, target, self.current_epoch)
         print("Loss: ", loss)
         # print(fused_output.argmax(dim=1))

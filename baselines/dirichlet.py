@@ -9,23 +9,24 @@ from octopy.octopy.uncertainty.loss import EvidentialLoss
 
 
 class DirichletModel(pl.LightningModule):
-    def __init__(self, model, num_classes=42, dropout=0.):
+    def __init__(self, model, num_classes=42, dropout=0., lr=1e-3, annealing_step=50, activation="exp", clamp_max=10):
         super(DirichletModel, self).__init__()
         self.num_classes = num_classes
         self.model = model(num_classes=num_classes,
-                           monte_carlo=False, dropout=dropout, dirichlet=True)
+                           monte_carlo=False, dropout=dropout, dirichlet=True, activation=activation, clamp_max=clamp_max)
         self.train_acc = Accuracy(task='multiclass', num_classes=num_classes)
         self.val_acc = Accuracy(task='multiclass', num_classes=num_classes)
         self.test_acc = Accuracy(task='multiclass', num_classes=num_classes)
-        self.criterion = AvgTrustedLoss(num_views=3)
-        # self.criterion = EvidentialLoss(
-        #     num_classes=num_classes, device=self.device)
+        # self.criterion = AvgTrustedLoss(num_views=3)
+        self.criterion = EvidentialLoss(
+            num_classes=num_classes, device=self.device, annealing_step=annealing_step)
         self.quantification = Dirichlet(num_classes)
         self.aleatoric_uncertainties = None
         self.epistemic_uncertainties = None
         self.dc = None
         self.evidences_per_modality = None
         self.uncertainty_per_modality = None
+        self.lr = lr
 
     def forward(self, inputs):
         return self.model(inputs)
@@ -40,11 +41,10 @@ class DirichletModel(pl.LightningModule):
     def shared_step(self, batch, output_probs_tensor=False):
         image, audio, text, target = batch
         fused_output, output_per_modality = self((image, audio, text))
-        temp = torch.stack(
-            list(output_per_modality.values()))
-        loss = self.criterion(temp, target, fused_output)
-        # loss = self.criterion(fused_output,
-        #                       output_per_modality, target, self.current_epoch)
+
+        # loss = self.criterion(temp, target, fused_output)
+        loss = self.criterion(fused_output,
+                              output_per_modality, target, self.current_epoch)
         if output_probs_tensor:
             return loss, fused_output, target, output_per_modality
         return loss, fused_output, target
@@ -54,6 +54,7 @@ class DirichletModel(pl.LightningModule):
             batch, True)
         evidences_per_modality = torch.stack(
             list(evidences_per_modality.values()))
+        print(evidences_per_modality.shape)
         self.val_acc(output, target)
         alphas = output + 1
         probs = alphas / alphas.sum(dim=-1, keepdim=True)
@@ -69,8 +70,9 @@ class DirichletModel(pl.LightningModule):
             e)[0] for e in evidences_per_modality])
         aleatoric_uncertainty_per_modality = torch.stack([self.quantification(
             e)[0] for e in evidences_per_modality])
-        # dc = get_degree_of_conflict(evidences_per_modality, uncertainty_for_dc)
-        return loss, output, target, epistemic_uncertainty, aleatoric_uncertainty, aleatoric_uncertainty, evidences_per_modality, epistemic_uncertainty_per_modality
+        print(uncertainty_for_dc.shape)
+        dc = uncertainty_for_dc
+        return loss, output, target, epistemic_uncertainty, aleatoric_uncertainty, dc, evidences_per_modality, epistemic_uncertainty_per_modality, aleatoric_uncertainty_per_modality
 
     def test_step(self, batch, batch_idx):
         loss, output, target, evidences_per_modality = self.shared_step(
@@ -90,14 +92,17 @@ class DirichletModel(pl.LightningModule):
             (evidences_per_modality + 1).sum(dim=-1).unsqueeze(-1)
         epistemic_uncertainty_per_modality = torch.stack([self.quantification(
             e)[0] for e in evidences_per_modality])
+        print(epistemic_uncertainty_per_modality, "INCERTITUDE")
+
         aleatoric_uncertainty_per_modality = torch.stack([self.quantification(
             e)[1] for e in evidences_per_modality])
-        # dc = get_degree_of_conflict(evidences_per_modality, uncertainty_for_dc)
-        return loss, output, target, epistemic_uncertainty, aleatoric_uncertainty, aleatoric_uncertainty, evidences_per_modality, epistemic_uncertainty_per_modality
+        print(evidences_per_modality.shape, uncertainty_for_dc.shape)
+        dc = get_degree_of_conflict(evidences_per_modality, uncertainty_for_dc)
+        return loss, output, target, epistemic_uncertainty, aleatoric_uncertainty, dc, evidences_per_modality, epistemic_uncertainty_per_modality, aleatoric_uncertainty_per_modality
 
     def training_epoch_end(self, outputs):
         self.log('train_acc', self.train_acc.compute(), prog_bar=True)
-        self.criterion.annealing_step += 1
+        # self.criterion.annealing_step += 1
 
     def validation_epoch_end(self, outputs):
         self.log('val_acc', self.val_acc.compute(), prog_bar=True)
@@ -107,7 +112,7 @@ class DirichletModel(pl.LightningModule):
             [x[3] for x in outputs]).mean(), prog_bar=True)
         self.log('val_sigma', torch.cat([x[4]
                  for x in outputs]).mean(), prog_bar=True)
-        self.dc = torch.cat([x[5] for x in outputs]).detach().cpu().numpy()
+        # self.dc = torch.cat([x[5] for x in outputs]).detach().cpu().numpy()
         # self.evidences_per_modality = torch.cat(
         #     [x[6] for x in outputs]).detach().cpu().numpy()
         # self.uncertainty_per_modality = torch.cat(
@@ -121,14 +126,14 @@ class DirichletModel(pl.LightningModule):
             [x[4] for x in outputs]).detach().cpu().numpy()
         self.epistemic_uncertainties = torch.cat(
             [x[3] for x in outputs]).detach().cpu().numpy()
-        self.dc = torch.cat([x[5] for x in outputs]).detach().cpu().numpy()
-        self.evidences_per_modality = torch.stack(
-            [x[6] for x in outputs]).detach().cpu().numpy()
-        self.uncertainty_per_modality = torch.stack(
-            [x[7] for x in outputs]).detach().cpu().numpy()
+        # self.dc = torch.cat([x[5] for x in outputs]).detach().cpu().numpy()
+        # self.evidences_per_modality = torch.stack(
+        #     [x[6] for x in outputs]).detach().cpu().numpy()
+        # self.uncertainty_per_modality = torch.stack(
+        #     [x[7] for x in outputs]).detach().cpu().numpy()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-2)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.33, patience=5,
                                                                verbose=True)
         return {
