@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import torchaudio
 from torch.utils.data import Dataset
+import numpy as np
 
 
 class LUMADataset(Dataset):
@@ -17,8 +18,13 @@ class LUMADataset(Dataset):
         self.audio_transform = audio_transform
         self.text_transform = text_transform
         self.target_transform = target_transform
+        self.num_views = 3
         self.ood = ood
+        self.num_classes = 42
         self._load_data()
+        self.feature_column_map = {0: 'image', 1: 'path', 2: 'text'}
+        self.modality_mapping = {0: self.image_data,
+                                 1: self.audio_data, 2: self.text_data}
 
         self.label_mapping = {'man': 0, 'boy': 1, 'house': 2, 'woman': 3, 'girl': 4, 'table': 5, 'road': 6, 'horse': 7,
                               'dog': 8, 'ship': 9, 'bird': 10, 'mountain': 11, 'bed': 12, 'train': 13, 'bridge': 14,
@@ -36,10 +42,49 @@ class LUMADataset(Dataset):
         self.text_data = pd.read_csv(self.text_path, sep='\t')
         self.targets = self.image_data['label'].values
 
+    def addConflict(self, ratio):
+        index = np.arange(len(self))
+        targets = np.array([self.label_mapping[label]
+                           for label in self.targets])
+
+        records = dict()
+        for c in range(self.num_classes):
+            try:
+                i = np.where(targets == c)[0][0]
+            except IndexError:
+                continue
+
+            temp = dict()
+            for v in range(self.num_views):
+                modality_df = self.modality_mapping[v]
+                temp[v] = modality_df.iloc[i]
+            records[c] = temp
+
+        selects = np.random.choice(index, size=int(
+            ratio * len(index)), replace=False)
+
+        for i in selects:
+            v = np.random.randint(self.num_views)
+            target_df = self.modality_mapping[v]
+            sabotage_class = (targets[i] + 1) % self.num_classes
+
+            if sabotage_class not in records:
+                continue
+
+            sabotage_row = records[sabotage_class][v].copy()
+
+            original_victim_row = target_df.iloc[i].copy()
+
+            feature_col = self.feature_column_map[v]
+            original_victim_row[feature_col] = sabotage_row[feature_col]
+
+            target_df.iloc[i] = original_victim_row
+
     def __getitem__(self, index):
         image = self.image_data.loc[:, 'image'].iloc[index]
         audio_path = self.audio_data.loc[:, 'path'].iloc[index]
-        audio, sr = torchaudio.load(os.path.join(self.audio_data_path, audio_path))
+        audio, sr = torchaudio.load(
+            os.path.join(self.audio_data_path, audio_path))
         text = self.text_data.loc[:, 'text'].iloc[index]
         target = self.label_mapping[self.targets[index]] if not self.ood else 0
 

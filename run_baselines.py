@@ -19,6 +19,8 @@ from data_generation.text_processing import extract_deep_text_features
 from dataset import LUMADataset
 from octopy.octopy.metrics.conflict.conflict_change_rate import get_degree_of_conflict
 from lightning.pytorch.loggers import WandbLogger
+import json
+
 
 # Change Wandb name
 
@@ -56,6 +58,8 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument('-cm', '--clamp_max', type=int, default=10)
     parser.add_argument('-lr', '--learning_rate', type=float, default=1e-3)
     parser.add_argument('-e', '--epochs', type=int, default=150)
+    parser.add_argument('-mo', '--mode', type=str, default="train")
+    parser.add_argument('-i', '--id', type=str, default="")
 
     args, unknown = parser.parse_known_args()
     return args, unknown
@@ -114,6 +118,16 @@ test_dataset = LUMADataset(test_image_path, test_audio_path, test_audio_data_pat
                                [MelSpectrogram(), PadCutToSizeAudioTransform(128)]),
                            image_transform=image_transform)
 
+
+conflict_dataset = LUMADataset(test_image_path, test_audio_path, test_audio_data_path, test_text_path,
+                               text_transform=Text2FeatureTransform(
+                                   f'text_features_test_{args.noise_type}.npy'),
+                               audio_transform=Compose(
+                                   [MelSpectrogram(), PadCutToSizeAudioTransform(128)]),
+                               image_transform=image_transform)
+
+conflict_dataset.addConflict(1.0)
+
 ood_dataset = LUMADataset(ood_image_path, ood_audio_path, ood_audio_data_path, ood_text_path,
                           text_transform=Text2FeatureTransform(
                               f'text_features_ood_{args.noise_type}.npy'),
@@ -124,6 +138,7 @@ train_dataset, val_dataset = torch.utils.data.random_split(train_dataset, [int(0
                                                                            len(train_dataset) - int(
                                                                                0.8 * len(train_dataset))])
 
+
 batch_size = 128
 train_loader = torch.utils.data.DataLoader(
     train_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
@@ -133,6 +148,8 @@ test_loader = torch.utils.data.DataLoader(
     test_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
 ood_loader = torch.utils.data.DataLoader(
     ood_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
+conflict_loader = torch.utils.data.DataLoader(
+    conflict_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
 
 # Now we can use the loaders to train a model
 
@@ -147,8 +164,6 @@ n_ensemble = 10
 # de_models = [DEModel(c, classes, n_ensemble, dropout_p) for c in [ImageClassifier, AudioClassifier, TextClassifier,
 #                                                                   MultimodalClassifier]]
 
-dir_models = [DirichletModel(
-    MultimodalClassifier, classes, dropout=dropout_p)]
 
 if args.model == 'image':
     curr_model = ImageClassifier
@@ -157,10 +172,11 @@ elif args.model == 'audio':
 elif args.model == 'text':
     curr_model = TextClassifier
 
+base_name = f"{args.model}_{args.id}" if args.id != "" else f'model_{args.model}_a{args.annealing_step}_act{args.activation}_cm{args.clamp_max}_lr{args.learning_rate}_epochs{args.epochs}'
 
 if args.model == 'multimodal':
     used_models = [DirichletModel(
-        MultimodalClassifier, classes, dropout=dropout_p, annealing_step=args.annealing_step,
+        MultimodalClassifier, id=args.id, num_classes=classes, dropout=dropout_p, annealing_step=args.annealing_step,
         activation=args.activation, clamp_max=args.clamp_max, lr=args.learning_rate)]
 else:
     used_models = [UnimodalModel(curr_model, lr=args.learning_rate, annealing_step=args.annealing_step,
@@ -170,9 +186,8 @@ models = used_models
 
 uncertainty_values = {}
 dc_values = {}
-base_name = f'model_{args.model}_a{args.annealing_step}_act{args.activation}_cm{args.clamp_max}_lr{args.learning_rate}_epochs{args.epochs}'
 wandb_logger = WandbLogger(
-    log_model="all", name=base_name, project="LUMA_baselines")
+    log_model="all", name=base_name + f"_{args.mode}", project="LUMA_baselines")
 
 paths = [f"./unimodal_weights/{base_name}.pth"]
 for classifier, path in zip(models, paths):
@@ -184,42 +199,59 @@ for classifier, path in zip(models, paths):
             '_' + classifier.models[0].__class__.__name__
 
     max_epochs = args.epochs
+
     trainer = pl.Trainer(max_epochs=max_epochs,
                          gpus=1 if torch.cuda.is_available() else 0,
                          callbacks=[pl.callbacks.ModelCheckpoint(monitor='val_loss', mode='min', save_last=True)], logger=wandb_logger)
-    trainer.fit(model, train_loader, val_loader)
-    torch.save(model.model.state_dict(), path)
-    print(path)
-    # model.model.load_state_dict(torch.load(path))
+
+    if (args.mode == "train"):
+        trainer.fit(model, train_loader, val_loader)
+        torch.save(model.model.state_dict(), path)
+    if (args.mode == "test"):
+        print(path)
+        model.model.load_state_dict(torch.load(path, weights_only=True))
     print('Testing model')
     trainer.test(model, test_loader)
     acc_dict[model_name] = trainer.callback_metrics["test_acc"].item()
-    acc_dict[model_name + '_ale'] = trainer.callback_metrics["test_ale"]
-    acc_dict[model_name +
-             '_entropy_ep'] = trainer.callback_metrics["test_entropy_epi"]
-    aleatoric_uncertainties = model.aleatoric_uncertainties
-    epistemic_uncertainties = model.epistemic_uncertainties
-    print('Testing OOD')
-    trainer.test(model, ood_loader)
-    acc_dict[model_name + '_ood_ale'] = trainer.callback_metrics["test_ale"]
-    acc_dict[model_name +
-             '_ood'] = trainer.callback_metrics["test_acc"].item()
-    acc_dict[model_name +
-             '_ood_entropy_ep'] = trainer.callback_metrics["test_entropy_epi"]
-    aleatoric_uncertainties_ood = model.aleatoric_uncertainties
-    epistemic_uncertainties_ood = model.epistemic_uncertainties
+    if (args.model == 'multimodal'):
+        acc_dict[model_name + '_ale'] = trainer.callback_metrics["test_ale"]
+        acc_dict[model_name +
+                 '_entropy_ep'] = trainer.callback_metrics["test_entropy_epi"]
+        aleatoric_uncertainties = model.aleatoric_uncertainties
+        epistemic_uncertainties = model.epistemic_uncertainties
+    if args.model == 'multimodal':
+        print('Testing OOD')
+        trainer.test(model, ood_loader)
+        acc_dict[model_name + '_ood_ale'] = trainer.callback_metrics["test_ale"]
+        acc_dict[model_name +
+                 '_ood'] = trainer.callback_metrics["test_acc"].item()
+        acc_dict[model_name +
+                 '_ood_entropy_ep'] = trainer.callback_metrics["test_entropy_epi"]
+        aleatoric_uncertainties_ood = model.aleatoric_uncertainties
+        epistemic_uncertainties_ood = model.epistemic_uncertainties
 
-    auc_score = roc_auc_score(
-        np.concatenate([np.zeros(len(epistemic_uncertainties)),
-                       np.ones(len(epistemic_uncertainties_ood))]),
-        np.concatenate([epistemic_uncertainties, epistemic_uncertainties_ood]))
+        auc_score = roc_auc_score(
+            np.concatenate([np.zeros(len(epistemic_uncertainties)),
+                            np.ones(len(epistemic_uncertainties_ood))]),
+            np.concatenate([epistemic_uncertainties, epistemic_uncertainties_ood]))
 
-    uncertainty_values[f'epistemic'] = epistemic_uncertainties
-    uncertainty_values[f'aleatoric'] = aleatoric_uncertainties
-    uncertainty_values["uncertainty_per_modality"] = model.uncertainty_per_modality
-    uncertainty_values["evidences_per_modality"] = model.evidences_per_modality
-    dc_values[f'{model_name}_dc'] = model.dc
-    acc_dict[model_name + '_ood_auc'] = auc_score
+    if args.model == 'multimodal':
+        uncertainty_values[f'epistemic'] = epistemic_uncertainties
+        uncertainty_values[f'aleatoric'] = aleatoric_uncertainties
+        # uncertainty_values["uncertainty_per_modality"] = model.uncertainty_per_modality
+        uncertainty_values["evidences_per_modality"] = model.evidences_per_modality
+        uncertainty_values["uncertainty_per_modality_dbf"] = model.modality_uncertainties
+        uncertainty_values["uncertainty_dbf_normal"] = model.uncertainty_dbf
+        uncertainty_values["conflict_dbf_normal"] = model.conflict_dbf
+
+        dc_values[f'{model_name}_dc'] = model.dc
+        # acc_dict[model_name + '_ood_auc'] = auc_score
+
+        print("Testing conflict")
+
+        trainer.test(model, conflict_loader)
+        uncertainty_values["uncertainty_dbf_conflict"] = model.uncertainty_dbf
+
 
 for key, value in acc_dict.items():
     print(f'{key}: {value}')
@@ -227,9 +259,11 @@ for key, value in acc_dict.items():
 acc_df = pd.DataFrame.from_dict(acc_dict, orient="index")
 acc_df.to_csv(f'./unimodal_results/{base_name}.csv')
 
-# uncertainty_df = pd.DataFrame(uncertainty_values)
+if args.model == 'multimodal':
+    serializable_uncertainty_values = {
+        key: value.tolist() if isinstance(value, np.ndarray) else value
+        for key, value in uncertainty_values.items()
+    }
 
-# uncertainty_df.to_csv(f'uncertainty_values{args.noise_type}.csv')
-
-# dc_df = pd.DataFrame(dc_values)
-# dc_df.to_csv(f'dc_values{args.noise_type}.csv')
+    with open(f"./unimodal_results/{base_name}_uncertainty.json", 'w') as f:
+        json.dump(serializable_uncertainty_values, f, indent=4)

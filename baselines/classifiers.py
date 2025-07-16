@@ -91,7 +91,7 @@ class TextClassifier(torch.nn.Module):
 
 
 class MultimodalClassifier(torch.nn.Module):
-    def __init__(self, num_classes, dropout=0.5, monte_carlo=False, dirichlet=False, aleatoric=False, clamp_max=10, activation="exp"):
+    def __init__(self, num_classes, id, dropout=0.5, monte_carlo=False, dirichlet=False, aleatoric=False, clamp_max=10, activation="exp"):
         super(MultimodalClassifier, self).__init__()
         self.image_model = ImageClassifier(
             num_classes, dropout, monte_carlo, aleatoric)
@@ -99,12 +99,13 @@ class MultimodalClassifier(torch.nn.Module):
             num_classes, dropout, monte_carlo, aleatoric)
         self.text_model = TextClassifier(
             num_classes, dropout, monte_carlo, aleatoric)
+
         self.audio_model.load_state_dict(torch.load(
-            "unimodal_weights/model_audio_a50_actexp_cm10_lr0.001_epochs70.pth"))
+            f"unimodal_weights/audio_{id}.pth"))
         self.text_model.load_state_dict(torch.load(
-            "unimodal_weights/model_text_a50_actexp_cm10_lr0.001_epochs70.pth"))
+            f"unimodal_weights/text_{id}.pth"))
         self.image_model.load_state_dict(torch.load(
-            "unimodal_weights/model_image_a50_actexp_cm10_lr0.001_epochs70.pth"))
+            f"unimodal_weights/image_{id}.pth"))
         self.num_views = 3
         self.fusion = DiscountedBeliefFusion(self.num_views, num_classes)
         self.activation = activation
@@ -147,8 +148,8 @@ class MultimodalClassifier(torch.nn.Module):
                 audio_logits = self.evidential_activation(audio_outputs)
                 text_logits = self.evidential_activation(text_outputs)
 
-            print(image_logits.argmax(dim=1), audio_logits.argmax(
-                dim=1), text_logits.argmax(dim=1))
+            # print(image_logits.argmax(dim=1), audio_logits.argmax(
+            #     dim=1), text_logits.argmax(dim=1))
             evidences = dict()
             evidences[0] = image_logits
             evidences[1] = audio_logits

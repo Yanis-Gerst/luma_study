@@ -6,6 +6,12 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import random
 from sklearn.metrics import roc_curve, auc
+import json
+
+name = "./unimodal_results/model_multimodal_a50_actexp_cm10_lr0.001_epochs70_uncertainty.json"
+with open(name, 'r') as f:
+    data_from_model = json.load(f)
+    print(data_from_model.keys())
 
 
 def load_data(file_list):
@@ -37,14 +43,10 @@ def plot_uncertainty_distributions(datasets, aggregations, aggregation_labels, o
                 # conflict_uncertainty = torch.load(
                 #     file_conflict).detach().cpu().numpy()
                 # Make random number for demonstration purposes
-                normal_uncertainty = []
-                for i in range(100):
-                    normal_uncertainty.append(random.randint(0, 100) / 100)
-                normal_uncertainty = torch.tensor(normal_uncertainty)
-                conflict_uncertainty = []
-                for i in range(100):
-                    conflict_uncertainty.append(random.randint(0, 100) / 100)
-                conflict_uncertainty = torch.tensor(conflict_uncertainty)
+                normal_uncertainty = np.array(
+                    data_from_model["uncertainty_dbf_normal"])
+                conflict_uncertainty = np.array(
+                    data_from_model["uncertainty_dbf_conflict"])
             except FileNotFoundError:
                 print(f'File not found: {file_normal} or {file_conflict}')
                 continue
@@ -131,16 +133,16 @@ def plot_average_modality_uncertainties(datasets, output_filename):
     fig, axes = plt.subplots(3, 2, figsize=(6, 4), sharey='all', sharex=False)
     epistemic_key = "DirichletModel_MultimodalClassifier_epistemic"
     aleatoric_key = "DirichletModel_MultimodalClassifier_aleatoric"
+
     prob_per_class = [.1, .2, .8]
     uncertainty_per_modality = [.1]
     test = prob_per_class + uncertainty_per_modality
+
     for ax, dataset in zip(axes.flatten(), datasets):
-
-        modality_uncertainty = []
-
-        modality_uncertainty.append(test)
+        modality_uncertainty = np.mean(np.array(
+            data_from_model["uncertainty_per_modality_dbf"]), axis=1)
         modality_uncertainty = np.stack(modality_uncertainty)
-
+        modality_uncertainty = np.transpose(modality_uncertainty)
         data = pd.DataFrame(modality_uncertainty, columns=[
                             f'M{i + 1}' for i in range(modality_uncertainty.shape[-1])])
         sns.barplot(data, ax=ax, palette='viridis')
@@ -201,8 +203,9 @@ if __name__ == "__main__":
         'doc': 'DBF (our)',
         'weighted_doc': 'WDBF (our)'
     }
-    # plot_average_modality_uncertainties(
-    #     datasets, 'average_modality_uncertainties.pdf')
+
+    plot_average_modality_uncertainties(
+        datasets, 'average_modality_uncertainties.pdf')
     plot_uncertainty_distributions(
         datasets, aggregations, aggregation_labels, 'conflict_normal_uncertainty_distributions.pdf')
 
