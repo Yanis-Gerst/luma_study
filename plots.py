@@ -7,8 +7,10 @@ import matplotlib.pyplot as plt
 import random
 from sklearn.metrics import roc_curve, auc
 import json
+import os
 
-name = "./unimodal_results/model_multimodal_a50_actexp_cm10_lr0.001_epochs70_uncertainty.json"
+name = "unimodal_results/multimodalWithTwo_1_uncertainty.json"
+base_name = os.path.basename(name)
 with open(name, 'r') as f:
     data_from_model = json.load(f)
     print(data_from_model.keys())
@@ -204,10 +206,12 @@ if __name__ == "__main__":
         'weighted_doc': 'WDBF (our)'
     }
 
+    path = f"plot/{base_name}_average_modality_uncertainties.pdf"
+    path2 = f"plot/{base_name}_conflict_normal_uncertainty_distributions.pdf"
     plot_average_modality_uncertainties(
-        datasets, 'average_modality_uncertainties.pdf')
+        datasets, path)
     plot_uncertainty_distributions(
-        datasets, aggregations, aggregation_labels, 'conflict_normal_uncertainty_distributions.pdf')
+        datasets, aggregations, aggregation_labels, path2)
 
 
 # # Example usage

@@ -10,7 +10,7 @@ from torchaudio.transforms import MelSpectrogram
 from torchvision.transforms import ToTensor
 from torchvision.transforms.v2 import Compose, Normalize
 
-from baselines.classifiers import AudioClassifier, ImageClassifier, MultimodalClassifier, TextClassifier
+from baselines.classifiers import AudioClassifier, ImageClassifier, MultimodalClassifier, TextClassifier, MultimodalClassifierWithTwo
 from baselines.unimodal_model import UnimodalModel
 from baselines.de_model import DEModel
 from baselines.dirichlet import DirichletModel
@@ -60,6 +60,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument('-e', '--epochs', type=int, default=150)
     parser.add_argument('-mo', '--mode', type=str, default="train")
     parser.add_argument('-i', '--id', type=str, default="")
+    parser.add_argument('-fl', '--flambda', type=float, default=1)
 
     args, unknown = parser.parse_known_args()
     return args, unknown
@@ -177,7 +178,11 @@ base_name = f"{args.model}_{args.id}" if args.id != "" else f'model_{args.model}
 if args.model == 'multimodal':
     used_models = [DirichletModel(
         MultimodalClassifier, id=args.id, num_classes=classes, dropout=dropout_p, annealing_step=args.annealing_step,
-        activation=args.activation, clamp_max=args.clamp_max, lr=args.learning_rate)]
+        activation=args.activation, clamp_max=args.clamp_max, lr=args.learning_rate, flambda=args.flambda)]
+elif args.model == "multimodalWithTwo":
+    used_models = [DirichletModel(
+        MultimodalClassifierWithTwo, id=args.id, num_classes=classes, dropout=dropout_p, annealing_step=args.annealing_step,
+        activation=args.activation, clamp_max=args.clamp_max, lr=args.learning_rate, flambda=args.flambda)]
 else:
     used_models = [UnimodalModel(curr_model, lr=args.learning_rate, annealing_step=args.annealing_step,
                                  activation=args.activation, clamp_max=args.clamp_max)]
@@ -189,6 +194,7 @@ dc_values = {}
 wandb_logger = WandbLogger(
     log_model="all", name=base_name + f"_{args.mode}", project="LUMA_baselines")
 
+print("Number of GPUS:", torch.cuda.device_count())
 paths = [f"./unimodal_weights/{base_name}.pth"]
 for classifier, path in zip(models, paths):
     model = classifier
@@ -201,7 +207,7 @@ for classifier, path in zip(models, paths):
     max_epochs = args.epochs
 
     trainer = pl.Trainer(max_epochs=max_epochs,
-                         gpus=1 if torch.cuda.is_available() else 0,
+                         gpus=torch.cuda.device_count() if torch.cuda.is_available() else 0,
                          callbacks=[pl.callbacks.ModelCheckpoint(monitor='val_loss', mode='min', save_last=True)], logger=wandb_logger)
 
     if (args.mode == "train"):
@@ -213,29 +219,29 @@ for classifier, path in zip(models, paths):
     print('Testing model')
     trainer.test(model, test_loader)
     acc_dict[model_name] = trainer.callback_metrics["test_acc"].item()
-    if (args.model == 'multimodal'):
+    if (args.model == 'multimodal' or args.model == "multimodalWithTwo"):
         acc_dict[model_name + '_ale'] = trainer.callback_metrics["test_ale"]
         acc_dict[model_name +
                  '_entropy_ep'] = trainer.callback_metrics["test_entropy_epi"]
         aleatoric_uncertainties = model.aleatoric_uncertainties
         epistemic_uncertainties = model.epistemic_uncertainties
-    if args.model == 'multimodal':
-        print('Testing OOD')
-        trainer.test(model, ood_loader)
-        acc_dict[model_name + '_ood_ale'] = trainer.callback_metrics["test_ale"]
-        acc_dict[model_name +
-                 '_ood'] = trainer.callback_metrics["test_acc"].item()
-        acc_dict[model_name +
-                 '_ood_entropy_ep'] = trainer.callback_metrics["test_entropy_epi"]
-        aleatoric_uncertainties_ood = model.aleatoric_uncertainties
-        epistemic_uncertainties_ood = model.epistemic_uncertainties
+    # if args.model == 'multimodal' or args.model == "multimodalWithTwo":
+    #     print('Testing OOD')
+    #     trainer.test(model, ood_loader)
+    #     acc_dict[model_name + '_ood_ale'] = trainer.callback_metrics["test_ale"]
+    #     acc_dict[model_name +
+    #              '_ood'] = trainer.callback_metrics["test_acc"].item()
+    #     acc_dict[model_name +
+    #              '_ood_entropy_ep'] = trainer.callback_metrics["test_entropy_epi"]
+    #     aleatoric_uncertainties_ood = model.aleatoric_uncertainties
+    #     epistemic_uncertainties_ood = model.epistemic_uncertainties
 
-        auc_score = roc_auc_score(
-            np.concatenate([np.zeros(len(epistemic_uncertainties)),
-                            np.ones(len(epistemic_uncertainties_ood))]),
-            np.concatenate([epistemic_uncertainties, epistemic_uncertainties_ood]))
+    #     auc_score = roc_auc_score(
+    #         np.concatenate([np.zeros(len(epistemic_uncertainties)),
+    #                         np.ones(len(epistemic_uncertainties_ood))]),
+    #         np.concatenate([epistemic_uncertainties, epistemic_uncertainties_ood]))
 
-    if args.model == 'multimodal':
+    if args.model == 'multimodal' or args.model == "multimodalWithTwo":
         uncertainty_values[f'epistemic'] = epistemic_uncertainties
         uncertainty_values[f'aleatoric'] = aleatoric_uncertainties
         # uncertainty_values["uncertainty_per_modality"] = model.uncertainty_per_modality
@@ -257,13 +263,13 @@ for key, value in acc_dict.items():
     print(f'{key}: {value}')
 
 acc_df = pd.DataFrame.from_dict(acc_dict, orient="index")
-acc_df.to_csv(f'./unimodal_results/{base_name}.csv')
+acc_df.to_csv(f'./unimodal_results/{base_name}_f{args.flambda}.csv')
 
-if args.model == 'multimodal':
+if args.model == 'multimodal' or args.model == "multimodalWithTwo":
     serializable_uncertainty_values = {
         key: value.tolist() if isinstance(value, np.ndarray) else value
         for key, value in uncertainty_values.items()
     }
 
-    with open(f"./unimodal_results/{base_name}_uncertainty.json", 'w') as f:
+    with open(f"./unimodal_results/{base_name}_f{args.flambda}_uncertainty.json", 'w') as f:
         json.dump(serializable_uncertainty_values, f, indent=4)

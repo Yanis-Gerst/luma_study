@@ -91,7 +91,7 @@ class TextClassifier(torch.nn.Module):
 
 
 class MultimodalClassifier(torch.nn.Module):
-    def __init__(self, num_classes, id, dropout=0.5, monte_carlo=False, dirichlet=False, aleatoric=False, clamp_max=10, activation="exp"):
+    def __init__(self, num_classes, id, dropout=0.5, monte_carlo=False, dirichlet=False, aleatoric=False, clamp_max=10, activation="exp", flambda=1):
         super(MultimodalClassifier, self).__init__()
         self.image_model = ImageClassifier(
             num_classes, dropout, monte_carlo, aleatoric)
@@ -107,7 +107,8 @@ class MultimodalClassifier(torch.nn.Module):
         self.image_model.load_state_dict(torch.load(
             f"unimodal_weights/image_{id}.pth"))
         self.num_views = 3
-        self.fusion = DiscountedBeliefFusion(self.num_views, num_classes)
+        self.fusion = DiscountedBeliefFusion(
+            self.num_views, num_classes, flambda)
         self.activation = activation
 
         if self.activation == "s-exp" or self.activation == "exp":
@@ -160,3 +161,61 @@ class MultimodalClassifier(torch.nn.Module):
             return logits, evidences
         logits = (image_outputs + audio_outputs + text_outputs) / 3
         return logits
+
+
+class MultimodalClassifierWithTwo(torch.nn.Module):
+    def __init__(self, num_classes, id, dropout=0.5, monte_carlo=False, dirichlet=False, aleatoric=False, clamp_max=10, activation="exp", flambda=1):
+        print
+        super(MultimodalClassifierWithTwo, self).__init__()
+        self.audio_model = AudioClassifier(
+            num_classes, dropout, monte_carlo, aleatoric)
+        self.text_model = TextClassifier(
+            num_classes, dropout, monte_carlo, aleatoric)
+
+        self.audio_model.load_state_dict(torch.load(
+            f"unimodal_weights/audio_{id}.pth"))
+        self.text_model.load_state_dict(torch.load(
+            f"unimodal_weights/text_{id}.pth"))
+
+        self.num_views = 2
+        self.fusion = DiscountedBeliefFusion(
+            self.num_views, num_classes, flambda)
+        self.activation = activation
+
+        if self.activation == "s-exp" or self.activation == "exp":
+            self.evidential_activation = EvidentialActivation(
+                "exp", clamp_max=clamp_max)
+        else:
+            self.evidential_activation = EvidentialActivation(
+                activation)
+        self.monte_carlo = monte_carlo
+        self.dirichlet = dirichlet
+        self.aleatoric = aleatoric
+        if dirichlet and monte_carlo:
+            raise ValueError(
+                "Dirichlet and Monte Carlo cannot be used together")
+
+    def forward(self, x):
+        # image_outputs = self.image_model(x)
+        audio_outputs = self.audio_model(x)
+        text_outputs = self.text_model(x)
+
+        if self.dirichlet:
+            if self.activation == "s-exp":
+                audio_logits = torch.nn.functional.softplus(audio_outputs)
+                text_logits = torch.nn.functional.softplus(text_outputs)
+                audio_logits = self.evidential_activation(audio_logits)
+                text_logits = self.evidential_activation(text_logits)
+            else:
+                audio_logits = self.evidential_activation(audio_outputs)
+                text_logits = self.evidential_activation(text_outputs)
+
+            # print(image_logits.argmax(dim=1), audio_logits.argmax(
+            evidences = dict()
+            evidences[0] = text_logits
+            evidences[1] = audio_logits
+            logits = self.fusion(evidences)
+            # logits = ((image_logits + audio_logits) / 2 + text_logits) / 2
+            # print(logits.argmax(dim=1))
+            return logits, evidences
+        return None

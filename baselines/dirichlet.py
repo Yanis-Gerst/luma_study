@@ -9,11 +9,11 @@ from octopy.octopy.uncertainty.loss import EvidentialLoss
 
 
 class DirichletModel(pl.LightningModule):
-    def __init__(self, model, id, num_classes=42, dropout=0., lr=1e-3, annealing_step=50, activation="exp", clamp_max=10):
+    def __init__(self, model, id, num_classes=42, dropout=0., lr=1e-3, annealing_step=50, activation="exp", clamp_max=10, flambda=1):
         super(DirichletModel, self).__init__()
         self.num_classes = num_classes
         self.model = model(num_classes=num_classes,
-                           monte_carlo=False, dropout=dropout, dirichlet=True, activation=activation, clamp_max=clamp_max, id=id)
+                           monte_carlo=False, dropout=dropout, dirichlet=True, activation=activation, clamp_max=clamp_max, id=id, flambda=flambda)
         self.train_acc = Accuracy(task='multiclass', num_classes=num_classes)
         self.val_acc = Accuracy(task='multiclass', num_classes=num_classes)
         self.test_acc = Accuracy(task='multiclass', num_classes=num_classes)
@@ -39,6 +39,7 @@ class DirichletModel(pl.LightningModule):
         return loss
 
     def shared_step(self, batch, output_probs_tensor=False):
+
         image, audio, text, target = batch
         fused_output, output_per_modality = self((image, audio, text))
 
