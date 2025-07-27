@@ -1,29 +1,55 @@
-# LUMA: Learning from Uncertain and Multimodal Data
-![Screenshot-20240708174237-1456x489](https://github.com/bezirganyan/LUMA/assets/16824193/f97782ad-d28e-4559-b32b-f0660b4d46cd)
-
-
-
-## Overview
-
-LUMA is a multimodal dataset designed for benchmarking multimodal learning and multimodal uncertainty quantification. This dataset includes audio, text, and image modalities, enabling researchers to study uncertainty quantification in multimodal classification settings.
-
-The paper is accepted and will be presented at SIGIR 2025 Conference
-
-## Dataset Summary
-
-LUMA consists of:
-- **Audio Modality**: `wav` files of people pronouncing the class labels of the selected 50 classes.
-- **Text Modality**: Short text passages about the class labels, generated using large language models.
-- **Image Modality**: Images from a 50-class subset from CIFAR-10/100 datasets, as well as generated images from the same distribution.
-
-The dataset allows controlled injection of uncertainties, facilitating the study of uncertainty quantification in multimodal data.
+# LUMA+DBF: Learning from Uncertain and Multimodal Data
 
 ## Getting Started
 
-### Prerequisites
+First, compile the dataset as you normally would for LUMA to create the database. Instructions for LUMA installation are provided below.
 
-- Anaconda / Miniconda
-- Git
+Second, clone the OctoPy repository:
+
+```bash
+git clone octopy
+```
+
+Then, create a Python virtual environment:
+
+```bash
+python -m venv .venv
+```
+
+Install OctoPy's dependencies:
+
+```bash
+pip install -r octopy/requirements.txt
+```
+
+Install LUMA's dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+You can now run the code. Apologies for the disorganization.
+
+## Run the Code
+
+There are two files to run:
+
+The first file is `run_baselines.py`, which is used for training and testing the model on the LUMA dataset. You can run it with the following command:
+
+This file has many parameters due to extensive debugging and testing. The main parameters are:
+
+  * `--id`: The ID of the model, used for saving.
+  * `--model`: The model to use. Options include `image`, `text`, `audio`, `multimodal`, or `multimodalWithTwo`.
+  * `--flambda`: Specific to DBF.
+  * `--mode`: Use `train` to train the model and save its weights, or `test` to load weights and evaluate the model, saving the results.
+
+Example command:
+
+```bash
+python run_baselines.py --id 1 --model audio --mode train
+```
+
+To run a multimodal model, you need pre-trained unimodal models. The code will load these based on their IDs. For example, if your multimodal model has an ID of `1`, it will load weights from `audio_1` and `image_1`.
 
 ### Installation
 Clone the repository and navigate into the project directory:
@@ -74,10 +100,3 @@ If you use the dataset, please cite our paper with:
   year={2025}
 }
 ```
-
-## Contact
-
-* <a href="mailto:grigor.bezirganyan98@gmail.com">Grigor Bezirganyan</a>
-* <a href="mailto:sana.sellami@univ-amu.fr">Sana Sellami</a>
-* <a href="mailto:laure.berti@ird.fr">Laure Berti-Équille</a>
-* <a href="mailto:sebastien.fournier@univ-amu.fr">Sébastien Fournier</a>
