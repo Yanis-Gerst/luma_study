@@ -51,6 +51,9 @@ python run_baselines.py --id 1 --model audio --mode train
 
 To run a multimodal model, you need pre-trained unimodal models. The code will load these based on their IDs. For example, if your multimodal model has an ID of `1`, it will load weights from `audio_1` and `image_1`.
 
+
+For creating the plots, you have to run `plots.py` file. In that file you have a name variable that store the path to the results json file you want to plot. 
+
 ### Installation
 Clone the repository and navigate into the project directory:
 
